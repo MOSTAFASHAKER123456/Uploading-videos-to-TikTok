@@ -36,7 +36,7 @@ def log_error(step, error, page=None):
 
 # 🎬 مسار الفيديو
 
-VIDEO_FOLDER = os.path.join(BASE_DIR, "scrapit esraa") #الفولد اللى فيه الفديوها 
+VIDEO_FOLDER = os.path.join(BASE_DIR, "Videos") #الفولد اللى فيه الفديوها 
 videos = [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")]
 
 if not videos:
