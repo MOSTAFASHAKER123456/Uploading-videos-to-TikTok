@@ -29,7 +29,7 @@ def log_error(step, error, page=None):
     if page:
         try:
             screenshot_path = os.path.join(LOG_DIR, f"error_{timestamp}.png")
-            page.screenshot(path=screenshot_path)
+            page.screenshot(path=screenshot_path, full_page=True)
         except:
             pass
 
@@ -86,57 +86,90 @@ with sync_playwright() as p:
 
             page.keyboard.type(random_caption + " ")
             print("✍️ تم كتابة الكابشن")
+
+            #اسكرول لاخر الصفحة 
+            time.sleep(20)
+            for _ in range(6):
+                page.mouse.wheel(0, 3000)
+                page.wait_for_timeout(300)
+
         except Exception as e:
             print("⚠️ مشكلة في الكابشن")
             log_error("CAPTION", e, page)
 
         # 4️⃣ انتظار فحص المحتوى
-        try:
-            page.locator('.status-success').wait_for(state="visible", timeout=500000)
-            print("✅ انتهى فحص المحتوى")
-        except Exception as e:
-            print("⚠️ الفحص لم يكتمل")
-            log_error("CONTENT_CHECK", e, page)
+        should_post = False
 
-        # 5️⃣ زر النشر
         try:
-            post_btn = page.locator('[data-e2e="post_video_button"]')
-            post_btn.wait_for(state="visible", timeout=500000)
-
+            # نستنى أي نتيجة تظهر (نجاح أو تحذير أو بقاء الحالة)
             page.wait_for_function("""
             () => {
-                const btn = document.querySelector('[data-e2e="post_video_button"]');
-                if (!btn) return false;
-                const style = window.getComputedStyle(btn);
-                return !btn.disabled && style.pointerEvents !== 'none';
+                const success = document.querySelector('.status-success[data-show="true"]');
+                const restricted = document.body.innerText.includes('Content may be restricted');
+                return success || restricted;
             }
-            """, timeout=500000)
+            """, timeout=300000)  # 5 دقايق أقصى وقت
 
-            print("✅ زر النشر جاهز")
+            # نجاح
+            if page.locator('.status-success[data-show="true"]').count() > 0:
+                print("✅ انتهى فحص المحتوى - الفيديو سليم")
+                should_post = True
+
+            # تحذير
+            elif "Content may be restricted" in page.content():
+                print("⚠️ الفيديو مقيد من النشر")
+                log_error("CONTENT_RESTRICTED", "Video flagged as restricted", page)
+                should_post = False
+
+            # حالة غير واضحة (لسه processing أو مفيش نتيجة)
+            else:
+                print("⏳ الفحص لم يكتمل بالكامل - سيتم تخطي النشر احتياطيًا")
+                log_error("CONTENT_UNKNOWN", "No clear status after wait", page)
+                should_post = False
 
         except Exception as e:
-            print("⚠️ زر النشر غير جاهز")
-            log_error("POST_BUTTON_READY", e, page)
-
-        # 6️⃣ النشر
-        try:
-            post_btn.click()
-            print("🚀 تم الضغط على زر النشر")
-        except Exception as e:
-            print("❌ مشكلة في النشر")
-            log_error("POST_CLICK", e, page)
-
-        # ⏳ انتظار بعد النشر
-        page.wait_for_timeout(15000)
+            print("❌ الفحص لم يكتمل أو حدث خطأ")
+            log_error("CONTENT_CHECK", e, page)
+            should_post = False
 
 
+        # 5️⃣ زر النشر
+        if should_post:
+            try:
+                post_btn = page.locator('[data-e2e="post_video_button"]')
+                post_btn.wait_for(state="visible", timeout=500000)
 
+                page.wait_for_function("""
+                () => {
+                    const btn = document.querySelector('[data-e2e="post_video_button"]');
+                    if (!btn) return false;
+                    const style = window.getComputedStyle(btn);
+                    return !btn.disabled && style.pointerEvents !== 'none';
+                }
+                """, timeout=500000)
+
+                print("✅ زر النشر جاهز")
+
+                post_btn.click()
+                print("🚀 تم نشر الفيديو")
+
+            except Exception as e:
+                print("❌ فشل النشر")
+                log_error("POST_BUTTON", e, page)
+
+        else:
+            print("⏭️ تخطي النشر بسبب حالة المحتوى")
+
+
+        # 📁 نقل الفيديو بعد القرار
         DONE_FOLDER = os.path.join(BASE_DIR, "done")
         os.makedirs(DONE_FOLDER, exist_ok=True)
 
         os.rename(VIDEO_PATH, os.path.join(DONE_FOLDER, first_video))
+
     except Exception as e:
         log_error("GENERAL_ERROR", e, page)
 
     finally:
+        page.wait_for_timeout(10000)
         context.close()
