@@ -57,7 +57,14 @@ os.makedirs(DONE_FOLDER, exist_ok=True)
 VIDEO_FOLDER = os.path.join(BASE_DIR, "Videos")
 
 
-def upload_video():
+def upload_video(attempt=1, max_attempts=3):
+    if attempt > max_attempts:
+        print(f"❌ وصلنا للحد الأقصى ({max_attempts} محاولات) - هنقفل")
+        send_telegram_message(f"❌ <b>فشل الرفع بعد {max_attempts} محاولات!</b>")
+        sys.exit(0)
+    
+    print(f"🔁 المحاولة {attempt} من {max_attempts}")
+    
     videos = sorted(
         [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")],
         key=extract_number
@@ -213,11 +220,13 @@ def upload_video():
 
     if should_repeat:
         print("🔄 جاري المحاولة مع الفيديو التالي...")
-        upload_video()
+        upload_video(attempt + 1, max_attempts)
+        send_telegram_message(f"حصل خطأ ونجرى المحاولة ")
     else:
         if not posted_successfully:
             print("🔄 جاري تجربة الفيديو التالي...")
-            upload_video()
+            upload_video(attempt + 1, max_attempts)
+            send_telegram_message(f"حصل خطأ ونجرى المحاولة ")
         else:
             print("✅ البرنامج خلص بنجاح")
             sys.exit(0)
