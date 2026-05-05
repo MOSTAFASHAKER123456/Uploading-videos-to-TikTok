@@ -14,8 +14,8 @@ def extract_number(filename):
     return int(numbers[0]) if numbers else float('inf')
 
 # ✅ إعدادات تيليجرام
-TELEGRAM_BOT_TOKEN = "8507544252:AAE_JXek3Q3YWuI_1k-xrg1zZukWiIOLX7s"
-TELEGRAM_CHAT_ID = "1902127631"
+TELEGRAM_BOT_TOKEN = "التوكن بتاع البوت"
+TELEGRAM_CHAT_ID = "الاى دى بتاع البوت"
 
 def send_telegram_message(message):
     try:
