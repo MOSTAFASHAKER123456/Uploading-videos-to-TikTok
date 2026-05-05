@@ -220,13 +220,13 @@ def upload_video(attempt=1, max_attempts=3):
 
     if should_repeat:
         print("🔄 جاري المحاولة مع الفيديو التالي...")
-        upload_video(attempt + 1, max_attempts)
         send_telegram_message(f"حصل خطأ ونجرى المحاولة ")
+        upload_video(attempt + 1, max_attempts)
     else:
         if not posted_successfully:
             print("🔄 جاري تجربة الفيديو التالي...")
-            upload_video(attempt + 1, max_attempts)
             send_telegram_message(f"حصل خطأ ونجرى المحاولة ")
+            upload_video(attempt + 1, max_attempts)
         else:
             print("✅ البرنامج خلص بنجاح")
             sys.exit(0)
