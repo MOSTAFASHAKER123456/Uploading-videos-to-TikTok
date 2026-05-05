@@ -6,6 +6,8 @@ import random
 import sys
 import re
 import requests
+import subprocess
+
 
 def extract_number(filename):
     numbers = re.findall(r'\d+', filename)
@@ -62,11 +64,28 @@ def upload_video():
     )
 
     if not videos:
-        print("✅ مفيش فيديوهات، البرنامج خلص")
-        sys.exit(0)
+        print("❌ مفيش فيديوهات، هنشغل الـ exe")
 
+        exe_path = os.path.join(VIDEO_FOLDER, "Script repeat 24.exe")
+
+        # تشغيل exe مع argument (غيره حسب احتياجك)
+        subprocess.run([exe_path],input='1\n',text=True)
+        print("✅ الـ exe خلص، بنعيد الفحص...")
+
+        # نعيد قراءة الفولدر تاني بعد ما الـ exe يخلص
+        videos = sorted(
+            [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")],
+            key=extract_number
+        )
+
+        if not videos:
+            print("❌ لسه مفيش فيديوهات، هنقفل")
+            sys.exit(0)
+
+    # هنا كده فيه فيديوهات خلاص
     first_video = videos[0]
     VIDEO_PATH = os.path.join(VIDEO_FOLDER, first_video)
+
     print("🎬 الفيديو المستخدم:", first_video)
 
     should_repeat = True
