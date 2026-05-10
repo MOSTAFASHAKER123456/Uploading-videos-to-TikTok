@@ -3,10 +3,10 @@ import time
 from datetime import datetime
 from patchright.sync_api import sync_playwright
 import random
-import sys  # ← زود السطر ده
-
-
+import sys
 import re
+import subprocess
+
 
 def extract_number(filename):
     numbers = re.findall(r'\d+', filename)
@@ -32,25 +32,46 @@ def log_error(step, error, page=None):
         except:
             pass
 
-
 DONE_FOLDER = os.path.join(BASE_DIR, "done")
 os.makedirs(DONE_FOLDER, exist_ok=True)
 VIDEO_FOLDER = os.path.join(BASE_DIR, "Videos")
 
 
-def upload_video():
+def upload_video(attempt=1, max_attempts=3):
+    # ✅ حد أقصى للمحاولات
+    if attempt > max_attempts:
+        print(f"❌ وصلنا للحد الأقصى ({max_attempts} محاولات) - هنقفل")
+        sys.exit(0)
+
+    print(f"🔁 المحاولة {attempt} من {max_attempts}")
+
     videos = sorted(
-    [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")],
-    key=extract_number
-)
+        [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")],
+        key=extract_number
+    )
 
     if not videos:
-        print("✅ مفيش فيديوهات، البرنامج خلص")
-        sys.exit(0)
+        print("❌ مفيش فيديوهات، هنشغل الـ exe")
+
+        exe_path = os.path.join(VIDEO_FOLDER, "Script repeat 24.exe")
+        subprocess.run([exe_path], input='1\n', text=True)
+        print("✅ الـ exe خلص، بنعيد الفحص...")
+
+        # نعيد قراءة الفولدر بعد ما الـ exe يخلص
+        videos = sorted(
+            [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(".mp4")],
+            key=extract_number
+        )
+
+        if not videos:
+            print("❌ لسه مفيش فيديوهات، هنقفل")
+            sys.exit(0)
 
     first_video = videos[0]
     VIDEO_PATH = os.path.join(VIDEO_FOLDER, first_video)
     print("🎬 الفيديو المستخدم:", first_video)
+
+    should_repeat = True
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
@@ -121,6 +142,9 @@ def upload_video():
                 log_error("CONTENT_CHECK", e, page)
                 should_post = False
 
+            # ✅ متغير منفصل لتتبع نجاح النشر فعلًا
+            posted_successfully = False
+
             if should_post:
                 try:
                     post_btn = page.locator('[data-e2e="post_video_button"]')
@@ -137,25 +161,26 @@ def upload_video():
 
                     post_btn.click()
                     print("🚀 تم نشر الفيديو بنجاح")
-
-                    # ✅ ننقل الفيديو وبعدين نقفل
-                    os.rename(VIDEO_PATH, os.path.join(DONE_FOLDER, first_video))
-                    print("📁 تم نقل الفيديو لـ done")
-
-                    page.wait_for_timeout(5000)
-                    context.close()
-
-                    print("✅ البرنامج خلص بنجاح")
-                    sys.exit(0)  # ← يقفل البرنامج
+                    posted_successfully = True
 
                 except Exception as e:
                     print("❌ فشل النشر")
                     log_error("POST_BUTTON", e, page)
 
-            else:
-                # ⚠️ مقيد أو مش واضح - ننقل ونكرر
-                os.rename(VIDEO_PATH, os.path.join(DONE_FOLDER, first_video))
-                print("📁 تم نقل الفيديو المقيد لـ done")
+            # ✅ نقل الفيديو بره أي try/except عشان يتنفذ دايمًا
+            if posted_successfully or not should_post:
+                dest_path = os.path.join(DONE_FOLDER, first_video)
+                try:
+                    if os.path.exists(dest_path):
+                        os.remove(VIDEO_PATH)
+                        print("📁 الفيديو موجود في done مسبقًا - تم حذفه من Videos")
+                    else:
+                        os.rename(VIDEO_PATH, dest_path)
+                        print("📁 تم نقل الفيديو لـ done")
+                except Exception as e:
+                    print(f"⚠️ خطأ في نقل الفيديو: {e}")
+
+                should_repeat = False
 
         except Exception as e:
             log_error("GENERAL_ERROR", e, page)
@@ -164,9 +189,16 @@ def upload_video():
             page.wait_for_timeout(5000)
             context.close()
 
-    # 🔄 كرر مع الفيديو اللي بعده
-    print("🔄 جاري المحاولة مع الفيديو التالي...")
-    upload_video()
+    if should_repeat:
+        print("🔄 جاري المحاولة مع الفيديو التالي...")
+        upload_video(attempt + 1, max_attempts)
+    else:
+        if not posted_successfully:
+            print("🔄 جاري تجربة الفيديو التالي...")
+            upload_video(attempt + 1, max_attempts)
+        else:
+            print("✅ البرنامج خلص بنجاح")
+            sys.exit(0)
 
 
 # ▶️ ابدأ
