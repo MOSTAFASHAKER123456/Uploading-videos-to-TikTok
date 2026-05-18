@@ -1,68 +1,56 @@
-import os
-import time
-import random
-import json
-import hashlib
-import requests
-import shutil
+import os, time, random, json, hashlib, requests, shutil
 from datetime import datetime
 from patchright.sync_api import sync_playwright
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ⚙️ إعدادات التحكم — عدّل هنا بس
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ⚙️  إعدادات — عدّل هنا فقط
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-TIKTOK_USERNAME    = "@moshaker89"
-MAX_VIDEOS         = 10
+TIKTOK_USERNAME    = "@moshaker89"   # اسم الأكاونت
+MAX_VIDEOS         = 10              # عدد الفيديوهات
 
-TELEGRAM_BOT_TOKEN = "8507544252:AAE_JXek3Q3YWuI_1k-xrg1zZukWiIOLX7s"
-TELEGRAM_CHAT_ID   = "1902127631"
+TELEGRAM_TOKEN     = "."
+TELEGRAM_CHAT_ID   = "."
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# تأخيرات (ثواني) — عدّلها لو عايز تسرّع أو تبطّئ
+DELAY_BETWEEN_COMMENTS = (3, 5)     # بين كل رد وتاني
+DELAY_BETWEEN_VIDEOS   = (4, 7)     # بين كل فيديو وتاني
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
-
-LOG_DIR = os.path.join(BASE_DIR, "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-
+LOGS_DIR     = os.path.join(BASE_DIR, "logs");  os.makedirs(LOGS_DIR, exist_ok=True)
 REPLIED_FILE = os.path.join(BASE_DIR, "replied_comments.json")
+PROFILE_DIR  = os.path.join(BASE_DIR, "tiktok_profile")
 
-WRAPPER = '[class*="DivCommentItemWrapper"]'
+# السيليكتورات — مأخوذة من الـ HTML الفعلي
+SEL_COMMENT_PANEL   = '[data-e2e="search-comment-container"]'
+SEL_COMMENT_ITEM    = '[class*="DivCommentItem"]'
+SEL_COMMENT_TEXT    = 'p[data-e2e="comment-level-1"]'
+SEL_COMMENT_AUTHOR  = '[data-e2e="comment-username-1"]'
+SEL_REPLY_BTN       = 'span[aria-label="رد"][role="button"], [data-e2e="comment-reply-1"]'
+SEL_LIKE_BTN        = 'div[aria-label^="الإعجاب بفيديو"][role="button"], div[aria-label^="Like video"][role="button"]'
+SEL_REPLY_INPUT     = 'div[contenteditable="true"]'
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔧 وظائف مساعدة
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔧  أدوات مساعدة
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def send_telegram_message(message):
+def log(msg):
+    print(msg)
+
+def notify(msg):
+    """إرسال إشعار تيليجرام."""
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
-        response = requests.post(url, json=payload, timeout=10)
-        if response.status_code == 200:
-            print("📨 تم إرسال رسالة تيليجرام")
-        else:
-            print(f"⚠️ فشل إرسال تيليجرام: {response.text}")
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"},
+            timeout=10
+        )
     except Exception as e:
-        print(f"❌ خطأ في تيليجرام: {e}")
-
-
-def log_error(step, error, page=None):
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_file = os.path.join(LOG_DIR, f"error_{timestamp}.txt")
-    with open(log_file, "w", encoding="utf-8") as f:
-        f.write(f"STEP: {step}\n")
-        f.write(str(error) + "\n")
-    if page:
-        try:
-            page.screenshot(
-                path=os.path.join(LOG_DIR, f"error_{timestamp}.png"),
-                full_page=True
-            )
-        except:
-            pass
-
+        log(f"⚠️ تيليجرام: {e}")
 
 def load_replied():
     if os.path.exists(REPLIED_FILE):
@@ -70,461 +58,520 @@ def load_replied():
             return set(json.load(f))
     return set()
 
-
-def save_replied(replied_set):
+def save_replied(replied):
     with open(REPLIED_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(replied_set), f, ensure_ascii=False)
+        json.dump(list(replied), f, ensure_ascii=False)
 
+def get_reply_text():
+    path = os.path.join(BASE_DIR, "replies.txt")
+    with open(path, "r", encoding="utf-8") as f:
+        lines = [l.strip() for l in f if l.strip()]
+    return random.choice(lines)
 
-def get_random_reply():
-    replies_file = os.path.join(BASE_DIR, "replies.txt")
-    with open(replies_file, "r", encoding="utf-8") as f:
-        replies = [line.strip() for line in f if line.strip()]
-    return random.choice(replies)
-
-
-def clean_browser_cache():
-    profile_path = os.path.join(BASE_DIR, "tiktok_profile")
+def clear_cache():
+    time.sleep(2)  # ← استنى الـ browser يقفل خالص
     for folder in ["Default/Cache", "Default/Code Cache", "Default/IndexedDB"]:
-        full_path = os.path.join(profile_path, folder)
-        if os.path.exists(full_path):
-            shutil.rmtree(full_path)
-            print(f"🗑️ تم مسح {folder}")
-    print("✅ تم تنظيف الكاش")
+        p = os.path.join(PROFILE_DIR, folder)
+        if os.path.exists(p):
+            try:
+                shutil.rmtree(p)
+            except PermissionError:
+                log(f"⚠️ مش قادر يمسح {folder} — هنعدي")
+def comment_id(video_url, wrapper):
+    """
+    ID فريد وثابت لكل تعليق.
+    الأولوية: id attribute الرقمي ← data-comment-id ← hash من النص والكاتب.
+    مرتبط دايمًا بالـ video_url عشان نفس الشخص في فيديو تاني يتعامل معاه كتعليق جديد.
+    """
+    vid = video_url.rstrip("/").split("/")[-1].split("?")[0]
 
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔑 استخراج comment_id ثابت ومرتبط بالفيديو
-#
-# القاعدة الأساسية:
-#   video_id دايمًا جزء من الـ ID
-#   ← نفس الشخص في فيديو تاني = ID مختلف = هيترد عليه ✓
-#   ← نفس التعليق في نفس الفيديو = ID ثابت = مش هيترد تاني ✓
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-def get_stable_comment_id(wrapper, video_url, index):
-    # استخراج video_id من الـ URL
-    # مثال: https://www.tiktok.com/@x/video/7123456789 → "7123456789"
-    video_id = video_url.rstrip("/").split("/")[-1].split("?")[0]
-
-    # محاولة 1: video_id + data-comment-id
-    try:
-        cid = wrapper.get_attribute("data-comment-id")
-        if cid:
-            return f"v{video_id}_c{cid}"
-    except:
-        pass
-
-    # محاولة 2: video_id + id attribute
-    try:
-        elem_id = wrapper.get_attribute("id")
-        if elem_id:
-            return f"v{video_id}_id{elem_id}"
-    except:
-        pass
-
-    # محاولة 3: fallback — video_id + author + أول 20 حرف من النص
-    author = ""
-    text_prefix = ""
-    try:
-        author_el = wrapper.locator('a[data-e2e^="comment-username"]').first
-        if author_el.count() > 0:
-            author = author_el.inner_text().strip()
-    except:
-        pass
-
-    try:
-        text_el = wrapper.locator('p[data-e2e^="comment-level"]').first
-        if text_el.count() > 0:
-            text_prefix = text_el.inner_text().strip()[:20]
-    except:
-        pass
-
-    unique_str = f"{video_id}_{author}_{text_prefix}"
-    return f"v{video_id}_hash{hashlib.md5(unique_str.encode()).hexdigest()}"
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔒 إغلاق أي reply input مفتوح
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-def close_open_inputs(page):
-    for attempt in range(10):
-        count = page.locator('div[contenteditable="true"]').count()
-        if count <= 1:
-            print(f"   ✅ inputs مقفولة (متبقي: {count})")
-            return True
-        print(f"   📌 inputs متبقية: {count} — محاولة إغلاق {attempt+1}")
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-        page.mouse.click(400, 80)
-        page.wait_for_timeout(300)
-        page.mouse.wheel(0, -100)
-        page.wait_for_timeout(300)
-
-    print("   ⚠️ فضل input مفتوح — هنكمل برغم ده")
-    return False
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 📋 جلب الفيديوهات من البروفايل
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-def get_videos(page, profile_url, max_videos):
-    print(f"🔍 بنجيب آخر {max_videos} فيديوهات من: {profile_url}")
-    page.goto(profile_url)
-    page.wait_for_timeout(4000)
-
-    scroll_times = max(3, max_videos // 2)
-    for _ in range(scroll_times):
-        page.mouse.wheel(0, 2000)
-        page.wait_for_timeout(800)
-
-    video_links = []
-    seen = set()
-
-    for anchor in page.locator('a[href*="/video/"]').all():
-        href = anchor.get_attribute("href")
-        if href and "/video/" in href:
-            if href.startswith("/"):
-                href = "https://www.tiktok.com" + href
-            if href not in seen:
-                seen.add(href)
-                video_links.append(href)
-        if len(video_links) >= max_videos:
-            break
-
-    print(f"✅ لقينا {len(video_links)} فيديو")
-    for i, link in enumerate(video_links):
-        print(f"   {i+1}. {link}")
-
-    return video_links
-
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ❤️ لايك على تعليق
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-def like_comment(page, wrapper):
-    try:
-        like_btn = wrapper.locator('div[aria-label^="Like video"][role="button"]').first
-
-        if like_btn.count() == 0:
-            print("   ⚠️ مش لاقي زرار اللايك")
-            return False
-
+    for attr in ["id", "data-comment-id"]:
         try:
-            is_liked = like_btn.get_attribute("aria-pressed")
-            if is_liked == "true":
-                print("   ❤️ اتعمله لايك قبل كده — هنعدى")
-                return False
+            val = wrapper.get_attribute(attr)
+            if val and val.strip():
+                return f"{vid}_{val.strip()}"
         except:
             pass
 
-        like_btn.scroll_into_view_if_needed()
-        like_btn.click(force=True)
-        print("   ❤️ تم اللايك ✓")
+    author = text = ""
+    try:
+        el = wrapper.locator(SEL_COMMENT_AUTHOR).first
+        if el.count(): author = el.inner_text().strip()
+    except: pass
+    try:
+        el = wrapper.locator(SEL_COMMENT_TEXT).first
+        if el.count(): text = el.inner_text().strip()[:40]
+    except: pass
+
+    return f"{vid}_{hashlib.md5(f'{author}_{text}'.encode()).hexdigest()[:12]}"
+
+def is_sub_reply(wrapper):
+    """هل الـ wrapper ده رد على تعليق (level-2) مش تعليق أصلي؟"""
+    try:
+        if wrapper.locator('p[data-e2e="comment-level-2"]').count(): return True
+        cls = wrapper.get_attribute("class") or ""
+        if "reply" in cls.lower(): return True
+    except: pass
+    return False
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📋  جلب روابط الفيديوهات
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def fetch_video_urls(page, max_videos):
+    url = f"https://www.tiktok.com/{TIKTOK_USERNAME}"
+    log(f"\n🔍 فتح البروفايل: {url}")
+    page.goto(url, wait_until="domcontentloaded")
+    page.wait_for_timeout(3000)
+
+    # scroll لتحميل الفيديوهات
+    for _ in range(max(4, max_videos // 2)):
+        page.mouse.wheel(0, 2000)
+        page.wait_for_timeout(700)
+
+    seen, links = set(), []
+    for a in page.locator('a[href*="/video/"]').all():
+        href = a.get_attribute("href") or ""
+        if "/video/" not in href: continue
+        if not href.startswith("http"): href = "https://www.tiktok.com" + href
+        if href not in seen:
+            seen.add(href)
+            links.append(href)
+        if len(links) >= max_videos: break
+
+    log(f"✅ {len(links)} فيديو")
+    for i, l in enumerate(links, 1): log(f"   {i}. {l}")
+    return links
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 📜  تحميل كل التعليقات بـ scroll داخل الـ panel
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def load_all_comments(page):
+    """
+    الـ scroll بيتعمل على الـ window نفسه لما الـ cursor يكون
+    فوق منطقة التعليقات على اليمين.
+    """
+    log("📜 تحميل التعليقات...")
+
+    # نجيب الـ bounding box بتاع الـ comment panel مرة واحدة
+    # عشان نحط الـ cursor فوقه في كل جولة
+    panel_x = panel_y = None
+    try:
+        panel = page.locator('[data-e2e="search-comment-container"]').first
+        if panel.count():
+            box = panel.bounding_box()
+            if box:
+                panel_x = box["x"] + box["width"] / 2
+                panel_y = box["y"] + box["height"] / 2
+                log(f"   📍 comment panel at x={panel_x:.0f}, y={panel_y:.0f}")
+    except:
+        pass
+
+    # لو مش لاقي الـ panel، نحط الـ cursor على اليمين من الشاشة
+    if panel_x is None:
+        viewport = page.viewport_size or {"width": 1280, "height": 720}
+        panel_x  = viewport["width"] * 0.75
+        panel_y  = viewport["height"] * 0.5
+        log(f"   📍 fallback position x={panel_x:.0f}, y={panel_y:.0f}")
+
+    # نحرك الـ cursor فوق التعليقات مرة واحدة
+    page.mouse.move(panel_x, panel_y)
+    page.wait_for_timeout(300)
+
+    prev, streak = 0, 0
+    for rnd in range(80):
+        count = sum(
+            1 for w in page.locator(SEL_COMMENT_ITEM).all()
+            if not is_sub_reply(w)
+        )
+        log(f"   🔄 جولة {rnd+1}: {count} تعليق")
+
+        if count == prev:
+            streak += 1
+            limit = 3 if count < 30 else 8
+            if streak >= limit:
+                log("   ✅ خلصوا")
+                break
+        else:
+            streak = 0
+        prev = count
+
+        # 3 wheels في كل جولة عشان ننزل أكتر
+        page.mouse.wheel(0, 800)
+        page.wait_for_timeout(300)
+        page.mouse.wheel(0, 800)
+        page.wait_for_timeout(300)
+        page.mouse.wheel(0, 800)
+        page.wait_for_timeout(2000)
+
+    total = page.locator(SEL_COMMENT_ITEM).count()
+    log(f"📝 إجمالي الـ wrappers: {total}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔍  التحقق الذكي من وجود رد سابق على TikTok
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def already_replied_on_tiktok(page, wrapper, my_username):
+    """
+    بيشوف لو إنت ردّيت على التعليق ده فعلاً على TikTok.
+    الخطوات:
+      1. يفتح الردود الموجودة (لو في زرار "View X replies")
+      2. يدور على أي link يحتوي على اسمك جوا الـ replies
+    يرجع True لو لقى ردك.
+    """
+    username = my_username.lstrip("@").lower()
+    try:
+        # فتح الردود لو في زرار "View X replies"
+        for btn_sel in [
+            'p[data-e2e^="view-more-replies"]',
+            'span[data-e2e^="view-more-replies"]',
+            '[class*="SpanViewReply"]',
+            'p[data-e2e^="comment-reply-count"]',
+        ]:
+            btn = wrapper.locator(btn_sel).first
+            if btn.count():
+                btn.click()
+                page.wait_for_timeout(1000)
+                break
+
+        # ✅ طريقة 1: دور على username في ردود المستوى التاني
+        # ردودك بتظهر كـ data-e2e="comment-username-2"
+        for sel in ['[data-e2e^="comment-username-2"]', '[data-e2e^="comment-username"]']:
+            for el in wrapper.locator(sel).all():
+                name = (el.inner_text() or "").strip().lower()
+                if name == username or name == my_username.lower():
+                    return True
+
+        # ✅ طريقة 2: دور على links باسمك جوا الـ wrapper
+        for link in wrapper.locator('a[href*="/@"]').all():
+            href = (link.get_attribute("href") or "").lower()
+            if f"/@{username}" in href:
+                return True
+
+    except:
+        pass
+    return False
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ❤️  لايك على تعليق
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def do_like(page, wrapper):
+    try:
+        btn = wrapper.locator(SEL_LIKE_BTN).first
+        if btn.count() == 0:
+            log("   ⚠️ زرار اللايك مش موجود")
+            return
+        if btn.get_attribute("aria-pressed") == "true":
+            log("   ❤️ عمله لايك قبل كده")
+            return
+        btn.scroll_into_view_if_needed()
+        btn.click(force=True)
+        log("   ❤️ لايك ✓")
+        page.wait_for_timeout(400)
+    except Exception as e:
+        log(f"   ⚠️ فشل اللايك: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 💬  الرد على تعليق
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def do_reply(page, wrapper, reply_text):
+    """
+    يرد على تعليق معين.
+    الخطوات: hover ← زرار الرد ← إيجاد input الرد ← كتابة ← Enter.
+    يرجع True لو نجح.
+    """
+
+    # 1) hover عشان تظهر الأزرار
+    try:
+        wrapper.scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        wrapper.hover()
         page.wait_for_timeout(500)
+    except: pass
+
+    # 2) زرار الرد
+    reply_btn = None
+    for sel in SEL_REPLY_BTN.split(", "):
+        btn = wrapper.locator(sel.strip()).first
+        if btn.count():
+            reply_btn = btn
+            break
+
+    if reply_btn is None:
+        log("   ❌ مش لاقي زرار الرد")
+        return False
+
+    try:
+        reply_btn.wait_for(state="visible", timeout=4000)
+        reply_btn.click(force=True)
+        page.wait_for_timeout(1000)
+    except Exception as e:
+        log(f"   ❌ فشل الضغط على رد: {e}")
+        return False
+
+    # 3) إيجاد الـ reply input
+    # بنعد الـ inputs قبل وبعد الضغط عشان نعرف الجديد
+    page.wait_for_timeout(600)
+    reply_input = None
+
+    all_inputs = page.locator(SEL_REPLY_INPUT).all()
+    for inp in all_inputs:
+        try:
+            described = inp.get_attribute("aria-describedby") or ""
+            if described:
+                ph = page.locator(f"#{described}")
+                if ph.count():
+                    ph_text = ph.inner_text().lower()
+                    if "reply" in ph_text or "رد" in ph_text or "add a reply" in ph_text:
+                        reply_input = inp
+                        break
+        except: continue
+
+    # fallback: آخر input ظهر
+    if reply_input is None:
+        reply_input = page.locator(SEL_REPLY_INPUT).last
+
+    # 4) كتابة الرد
+    try:
+        reply_input.click(force=True)
+        page.wait_for_timeout(300)
+
+        # مسح أي نص موجود
+        reply_input.evaluate("el => el.innerText = ''")
+        page.wait_for_timeout(200)
+
+        for char in reply_text:
+            page.keyboard.type(char)
+            time.sleep(0.018)
+
+        page.wait_for_timeout(500)
+        page.keyboard.press("Enter")
+        log(f"   ✅ رد: {reply_text}")
+        page.wait_for_timeout(1200)
         return True
 
     except Exception as e:
-        print(f"   ⚠️ فشل اللايك: {e}")
+        log(f"   ❌ فشل الكتابة: {e}")
         return False
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🔍 هل الـ wrapper ده رد (level-2)؟
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔒  إغلاق reply input لو فضل مفتوح
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def is_reply_wrapper(wrapper):
-    try:
-        e2e = wrapper.get_attribute("data-e2e") or ""
-        if "level-2" in e2e:
-            return True
-        if wrapper.locator('p[data-e2e="comment-level-2"]').count() > 0:
-            return True
-        class_attr = wrapper.get_attribute("class") or ""
-        if "reply" in class_attr.lower() or "Reply" in class_attr:
-            return True
-    except:
-        pass
-    return False
+def close_reply_box(page):
+    """
+    بعد كل رد، بنتأكد إن الـ reply box اتقفل.
+    الـ minimum الطبيعي = 1 input (صندوق التعليق الرئيسي).
+    لو في أكتر من 1 يبقى الـ reply box لسه مفتوح.
+    """
+    for _ in range(6):
+        if page.locator(SEL_REPLY_INPUT).count() <= 1:
+            break
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(250)
+        page.mouse.click(600, 200)
+        page.wait_for_timeout(250)
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 💬 الرد على تعليقات فيديو واحد + لايك
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🎬  معالجة فيديو واحد
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def reply_to_video_comments(page, video_url, replied):
-    print(f"\n🎬 فتح الفيديو: {video_url}")
+def process_video(page, video_url, replied):
+    log(f"\n{'━'*50}")
+    log(f"🎬 {video_url}")
 
-    if "?" not in video_url:
-        video_url += "?is_from_webapp=1"
+    # فتح الفيديو — networkidle عشان TikTok يحمل الـ JS كامل
+    page.goto(video_url, wait_until="networkidle", timeout=30000)
+    page.wait_for_timeout(2000)
 
-    page.goto(video_url)
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(3000)
-
-    new_replies_count = 0
-
-    # =========================
-    # 1) فتح التعليقات
-    # =========================
-    try:
-        opened = False
-        for selector in ['[data-e2e="comment-icon"]', '[data-e2e="browse-comment-icon"]']:
-            icon = page.locator(selector).first
-            if icon.count() > 0:
-                icon.wait_for(state="visible", timeout=8000)
-                icon.click()
-                opened = True
-                print("💬 تم فتح التعليقات")
-                break
-        if not opened:
-            print("⚠️ مش لاقي أيقونة التعليقات")
-            return 0
-        page.wait_for_timeout(2500)
-    except Exception as e:
-        print(f"⚠️ فشل فتح التعليقات: {e}")
-        return 0
-
-    # =========================
-    # 2) انتظار تحميل التعليقات
-    # =========================
-    try:
-        page.wait_for_selector(WRAPPER, timeout=12000)
-        print("✅ التعليقات اتحملت")
-    except:
-        print("⚠️ مفيش تعليقات")
-        return 0
-
-    for _ in range(3):
+    # انتظار ظهور أيقونة التعليقات — بنجرب كل الـ selectors المعروفة
+    icon = None
+    for sel in [
+        '[data-e2e="browse-comment-icon"]',
+        '[data-e2e="comment-icon"]',
+        'button[aria-label*="comment"]',
+        'button[aria-label*="تعليق"]',
+    ]:
         try:
-            comment_panel = page.locator('[class*="DivCommentListContainer"]').first
-            comment_panel.evaluate("el => el.scrollBy(0, 800)")
+            el = page.locator(sel).first
+            el.wait_for(state="visible", timeout=8000)
+            icon = el
+            log(f"💬 لقينا أيقونة التعليقات: {sel}")
+            break
         except:
-            page.mouse.wheel(0, 800)
-        page.wait_for_timeout(900)
-
-    # =========================
-    # 3) Snapshot للـ IDs قبل ما نبدأ
-    #
-    # ✅ الإصلاحان معاً هنا:
-    #
-    # إصلاح 1 — مش بيرد على نفس الشخص في فيديو تاني:
-    #   الـ ID بيبدأ دايمًا بـ video_id
-    #   ← نفس الشخص في فيديو مختلف = video_id مختلف = ID مختلف = هيترد ✓
-    #
-    # إصلاح 2 — بيرد على ناس اترد عليهم فعلاً:
-    #   الـ ID ثابت لنفس التعليق في نفس الفيديو
-    #   ← لو موجود في replied = يعدّيه بدون رد ✓
-    # =========================
-    all_wrappers = page.locator(WRAPPER).all()
-    original_comment_ids = []
-
-    for idx, w in enumerate(all_wrappers):
-        if is_reply_wrapper(w):
             continue
-        cid = get_stable_comment_id(w, video_url, idx)
-        original_comment_ids.append(cid)
 
-    total_original = len(original_comment_ids)
-    print(f"📝 تعليقات أصلية (level-1): {total_original}")
-
-    if total_original == 0:
-        print("⚠️ مش لاقي تعليقات أصلية")
+    if icon is None:
+        log("⚠️ مش لاقي أيقونة التعليقات — هنعدي")
         return 0
 
-    # =========================
-    # 4) Loop على الـ IDs مش على index رقمي
-    # =========================
-    for comment_num, comment_id in enumerate(original_comment_ids):
+    # ضغط على الأيقونة وانتظار ظهور أول تعليق فعلاً
+    icon.click()
 
-        if comment_id in replied:
-            print(f"⏭️ [{comment_num+1}/{total_original}] اترد عليه قبل كده — هنعدى")
+    found = False
+    for sel in ['[class*="DivCommentItem"]']:
+        try:
+            page.wait_for_selector(sel, timeout=10000)
+            found = True
+            log("✅ التعليقات اتحملت")
+            break
+        except:
             continue
 
-        # إعادة جمع الـ wrappers بعد كل رد لأن الـ DOM اتغير
-        current_wrappers = page.locator(WRAPPER).all()
+    if not found:
+        # ممكن الأيقونة تكون اتضغطت بس التعليقات فاضية
+        log("⚠️ مفيش تعليقات في الفيديو ده")
+        return 0
 
-        target_wrapper = None
-        for idx, w in enumerate(current_wrappers):
-            if is_reply_wrapper(w):
-                continue
-            wid = get_stable_comment_id(w, video_url, idx)
-            if wid == comment_id:
-                target_wrapper = w
+    # تحميل كل التعليقات
+    load_all_comments(page)
+
+    # جمع الـ IDs قبل ما نبدأ
+    all_items    = page.locator(SEL_COMMENT_ITEM).all()
+    comment_ids  = []
+    seen_ids     = set()
+
+    for idx, w in enumerate(all_items):
+        if is_sub_reply(w): continue
+        cid = comment_id(video_url, w)
+        if cid not in seen_ids:
+            seen_ids.add(cid)
+            comment_ids.append(cid)
+
+    total = len(comment_ids)
+    log(f"📋 {total} تعليق أصلي")
+
+    replied_count = 0
+
+    for num, cid in enumerate(comment_ids, 1):
+
+        # Check 1: محفوظ محلياً (سريع)
+        if cid in replied:
+            log(f"⏭️  [{num}/{total}] محفوظ محلياً — هنعدي")
+            continue
+
+        # إيجاد الـ wrapper الحالي بالـ ID
+        target = None
+        for idx, w in enumerate(page.locator(SEL_COMMENT_ITEM).all()):
+            if is_sub_reply(w): continue
+            if comment_id(video_url, w) == cid:
+                target = w
                 break
 
-        if target_wrapper is None:
-            print(f"⚠️ [{comment_num+1}/{total_original}] مش لاقي الـ wrapper — ID: {comment_id[:30]}")
+        if target is None:
+            log(f"⚠️  [{num}/{total}] مش لاقي التعليق في الـ DOM")
             continue
 
-        # استخراج النص واسم الكاتب للطباعة
-        text   = ""
-        author = ""
+        # طباعة معلومات التعليق
+        author = text = ""
         try:
-            text_el = target_wrapper.locator('p[data-e2e^="comment-level"]').first
-            if text_el.count() > 0:
-                text = text_el.inner_text().strip()
-        except:
-            pass
-
+            el = target.locator(SEL_COMMENT_AUTHOR).first
+            if el.count(): author = el.inner_text().strip()
+        except: pass
         try:
-            author_el = target_wrapper.locator('a[data-e2e^="comment-username"]').first
-            if author_el.count() > 0:
-                author = author_el.inner_text().strip()
-        except:
-            pass
+            el = target.locator(SEL_COMMENT_TEXT).first
+            if el.count(): text = el.inner_text().strip()
+        except: pass
 
-        if not text:
-            text = f"(no_text_{comment_num})"
+        log(f"\n💬 [{num}/{total}] @{author or '?'}: {text[:45] or '(sticker)'}")
 
-        print(f"\n💬 [{comment_num+1}/{total_original}] @{author}: {text[:50]}")
-
-        target_wrapper.scroll_into_view_if_needed()
-        page.wait_for_timeout(400)
-
-        close_open_inputs(page)
-        target_wrapper.hover()
-        page.wait_for_timeout(600)
-
-        # =========================
-        # 5) ❤️ لايك
-        # =========================
-        like_comment(page, target_wrapper)
-
-        # =========================
-        # 6) زر الرد
-        # =========================
-        reply_btn = target_wrapper.locator('p[role="button"][aria-label="Reply"]').first
-        if reply_btn.count() == 0:
-            reply_btn = target_wrapper.locator('[data-e2e^="comment-reply"]').first
-
-        try:
-            reply_btn.wait_for(state="visible", timeout=4000)
-            reply_btn.click(force=True)
-            print("👉 تم الضغط على رد")
-            page.wait_for_timeout(1200)
-        except Exception as e:
-            print(f"❌ زر الرد مش ظاهر: {e}")
-            continue
-
-        # =========================
-        # 7) إيجاد الـ reply input
-        # =========================
-        reply_text  = get_random_reply()
-        reply_input = None
-
-        page.wait_for_timeout(800)
-
-        for inp in page.locator('div[contenteditable="true"]').all():
-            try:
-                describedby = inp.get_attribute("aria-describedby") or ""
-                if describedby:
-                    placeholder_el = page.locator(f"#{describedby}")
-                    if placeholder_el.count() > 0:
-                        placeholder_text = placeholder_el.inner_text()
-                        print(f"   placeholder: '{placeholder_text}'")
-                        if "reply" in placeholder_text.lower() or "رد" in placeholder_text:
-                            reply_input = inp
-                            print("✅ لقينا reply input")
-                            break
-            except:
-                continue
-
-        if reply_input is None:
-            print("⚠️ fallback: هناخد آخر input")
-            reply_input = page.locator('div[contenteditable="true"]').last
-
-        # =========================
-        # 8) الكتابة والإرسال
-        # =========================
-        try:
-            reply_input.click(force=True)
-            page.wait_for_timeout(400)
-
-            print(f"📌 النص الحالي: '{reply_input.inner_text().strip()[:50]}'")
-
-            for char in reply_text:
-                page.keyboard.type(char)
-                time.sleep(0.02)
-
-            page.wait_for_timeout(600)
-            page.keyboard.press("Enter")
-            print(f"✅ تم الرد: {reply_text}")
-
-            page.wait_for_timeout(1500)
-
-            close_open_inputs(page)
-
-            # ✅ حفظ الـ ID — مرتبط بالفيديو ده بالتحديد
-            replied.add(comment_id)
+        # Check 2: رد موجود على TikTok فعلاً (يشمل الردود اليدوية)
+        if already_replied_on_tiktok(page, target, TIKTOK_USERNAME):
+            log(f"   ✅ رد موجود على TikTok — هنحفظه ونعدي")
+            replied.add(cid)
             save_replied(replied)
-            new_replies_count += 1
+            continue
 
-            time.sleep(random.uniform(3, 5))
+        # إغلاق أي reply box مفتوح من قبل
+        close_reply_box(page)
 
-        except Exception as e:
-            print(f"⚠️ فشل الكتابة: {e}")
-            close_open_inputs(page)
+        # لايك
+        do_like(page, target)
 
-    return new_replies_count
+        # رد
+        reply_text = get_reply_text()
+        success    = do_reply(page, target, reply_text)
+
+        # إغلاق الـ reply box بعد الرد
+        close_reply_box(page)
+
+        if success:
+            replied.add(cid)
+            save_replied(replied)
+            replied_count += 1
+            time.sleep(random.uniform(*DELAY_BETWEEN_COMMENTS))
+        else:
+            log("   ⚠️ فشل الرد — هنكمل على التاني")
+
+    log(f"\n📊 ردود على الفيديو ده: {replied_count}/{total}")
+    return replied_count
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🚀 الدالة الرئيسية
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🚀  الدالة الرئيسية
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def run_comment_bot():
-    PROFILE_URL = f"https://www.tiktok.com/{TIKTOK_USERNAME}"
-
-    print("=" * 50)
-    print("🤖 اسكربت الرد على التعليقات - اسكربت إسراء")
-    print(f"📹 عدد الفيديوهات: {MAX_VIDEOS}")
-    print("=" * 50)
+def main():
+    log("=" * 50)
+    log("🤖 اسكربت إسراء — الرد على التعليقات")
+    log(f"📹 فيديوهات: {MAX_VIDEOS}")
+    log("=" * 50)
 
     replied = load_replied()
-    print(f"📂 تعليقات محفوظة (اترد عليها قبل كده): {len(replied)}")
+    log(f"📂 ردود محفوظة: {len(replied)}")
 
-    total_replies = 0
+    total_new = 0
 
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context("tiktok_profile", headless=False)
-        page = context.new_page()
+    with sync_playwright() as pw:
+        ctx  = pw.chromium.launch_persistent_context(
+            PROFILE_DIR,
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"]
+        )
+        page = ctx.new_page()
 
         try:
-            video_urls = get_videos(page, PROFILE_URL, MAX_VIDEOS)
+            videos = fetch_video_urls(page, MAX_VIDEOS)
 
-            if not video_urls:
-                print("❌ مش لاقي فيديوهات!")
-                send_telegram_message("❌ <b>اسكربت التعليقات:</b> مش لاقي فيديوهات في البروفايل")
+            if not videos:
+                log("❌ مش لاقي فيديوهات")
+                notify("❌ <b>اسكربت إسراء:</b> مش لاقي فيديوهات")
                 return
 
-            for video_url in video_urls:
-                count = reply_to_video_comments(page, video_url, replied)
-                total_replies += count
-                print(f"📊 ردود على الفيديو ده: {count}")
-                time.sleep(random.uniform(3, 6))
+            for i, url in enumerate(videos, 1):
+                log(f"\n{'='*50}")
+                log(f"▶️  فيديو {i}/{len(videos)}")
+                count    = process_video(page, url, replied)
+                total_new += count
+                if i < len(videos):
+                    time.sleep(random.uniform(*DELAY_BETWEEN_VIDEOS))
 
         except Exception as e:
-            print(f"❌ خطأ عام: {e}")
-            log_error("GENERAL_ERROR", e, page)
-            send_telegram_message(f"❌ <b>اسكربت التعليقات وقع!</b>\n{str(e)[:200]}")
+            log(f"❌ خطأ عام: {e}")
+            notify(f"❌ <b>اسكربت إسراء وقع!</b>\n{str(e)[:200]}")
 
         finally:
-            page.wait_for_timeout(3000)
-            context.close()
-            clean_browser_cache()
+            ctx.close()
+            time.sleep(3)
+            clear_cache()
 
-    print(f"\n✅ خلصنا! إجمالي الردود الجديدة: {total_replies}")
-    send_telegram_message(
-        f"من اسكربت إسراء\n"
-        f"✅ <b>اسكربت التعليقات خلص!</b>\n"
-        f"💬 <b>إجمالي ردود جديدة:</b> {total_replies}\n"
-        f"🎬 <b>عدد الفيديوهات:</b> {MAX_VIDEOS}"
+    log(f"\n✅ خلصنا! إجمالي ردود جديدة: {total_new}")
+    notify(
+        f"✅ <b>اسكربت إسراء خلص</b>\n"
+        f"💬 ردود جديدة: <b>{total_new}</b>\n"
+        f"🎬 فيديوهات: <b>{MAX_VIDEOS}</b>"
     )
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-run_comment_bot()
+if __name__ == "__main__":
+    main()
