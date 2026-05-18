@@ -9,8 +9,8 @@ from patchright.sync_api import sync_playwright
 TIKTOK_USERNAME    = "@moshaker89"   # اسم الأكاونت
 MAX_VIDEOS         = 10              # عدد الفيديوهات
 
-TELEGRAM_TOKEN     = "8507544252:AAE_JXek3Q3YWuI_1k-xrg1zZukWiIOLX7s"
-TELEGRAM_CHAT_ID   = "1902127631"
+TELEGRAM_TOKEN     = "."
+TELEGRAM_CHAT_ID   = "."
 
 # تأخيرات (ثواني) — عدّلها لو عايز تسرّع أو تبطّئ
 DELAY_BETWEEN_COMMENTS = (3, 5)     # بين كل رد وتاني
